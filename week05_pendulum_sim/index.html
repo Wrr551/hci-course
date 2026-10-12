@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>单摆简谐振动模拟器</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #1a1a24; color: #d8d8e8;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #stage { position: absolute; inset: 0; display: block; }
+  #panel {
+    position: absolute; top: 16px; left: 16px; width: 268px;
+    padding: 14px 16px 16px;
+    background: rgba(30, 30, 44, 0.82);
+    border: 1px solid rgba(120, 140, 220, 0.25);
+    border-radius: 12px;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+    user-select: none;
+  }
+  #panel h1 {
+    margin: 0 0 12px; font-size: 15px; font-weight: 600;
+    letter-spacing: 1px; color: #8fb7ff;
+  }
+  .row { margin-bottom: 10px; }
+  .row label {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 12px; color: #9aa0bd; margin-bottom: 4px;
+  }
+  .row label span { color: #e6ecff; font-variant-numeric: tabular-nums; }
+  input[type=range] {
+    width: 100%; height: 4px; -webkit-appearance: none; appearance: none;
+    background: linear-gradient(90deg, #3f5bd6, #6f8cff);
+    border-radius: 3px; outline: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #cfe0ff; border: 2px solid #4b6cf0; cursor: pointer;
+    box-shadow: 0 0 8px rgba(110, 150, 255, 0.8);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #cfe0ff; border: 2px solid #4b6cf0; cursor: pointer;
+  }
+  .btns { display: flex; gap: 8px; margin-top: 12px; }
+  button {
+    flex: 1; padding: 7px 0; font-size: 12px; color: #dce6ff;
+    background: rgba(75, 108, 240, 0.18);
+    border: 1px solid rgba(110, 150, 255, 0.45);
+    border-radius: 7px; cursor: pointer; transition: all .15s;
+  }
+  button:hover { background: rgba(75, 108, 240, 0.38); }
+  button:active { transform: translateY(1px); }
+  #readout {
+    margin-top: 12px; padding-top: 10px;
+    border-top: 1px dashed rgba(140, 160, 220, 0.25);
+    font-size: 12px; line-height: 1.7; color: #9aa0bd;
+    font-variant-numeric: tabular-nums;
+  }
+  #readout b { color: #e6ecff; font-weight: 600; }
+  #hint {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: rgba(160, 170, 210, 0.55); user-select: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div id="panel">
+  <h1>PENDULUM SIM · 单摆简谐振动</h1>
+  <div class="row">
+    <label>摆长 L <span id="vL">200 px</span></label>
+    <input id="sL" type="range" min="60" max="340" step="1" value="200">
+  </div>
+  <div class="row">
+    <label>重力 g <span id="vG">9.80</span></label>
+    <input id="sG" type="range" min="1" max="25" step="0.1" value="9.8">
+  </div>
+  <div class="row">
+    <label>初始摆角 θ₀ <span id="vA">45°</span></label>
+    <input id="sA" type="range" min="0" max="170" step="1" value="45">
+  </div>
+  <div class="row">
+    <label>阻尼 <span id="vD">0.000</span></label>
+    <input id="sD" type="range" min="0" max="0.5" step="0.005" value="0">
+  </div>
+  <div class="btns">
+    <button id="btnPlay">暂停</button>
+    <button id="btnReset">重置</button>
+    <button id="btnTrail">拖尾</button>
+  </div>
+  <div id="readout">
+    角 度 θ：<b id="rTheta">0.0°</b><br>
+    角速度 ω：<b id="rOmega">0.00 rad/s</b><br>
+    理论周期 T：<b id="rPeriod">0.00 s</b><br>
+    实测周期：<b id="rMeas">-- s</b><br>
+    运行时间：<b id="rTime">0.0 s</b>
+  </div>
+</div>
+
+<div id="hint">拖动摆球可手动拉起 · 空格暂停 · R 重置</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------- 画布与自适应 ----------
+  var canvas = document.getElementById('stage');
+  var ctx = canvas.getContext('2d');
+  var W = 0, H = 0, DPR = 1;
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', function () { resize(); buildStars(); });
+  resize();
+
+  // ---------- 物理参数 ----------
+  var PPM = 100;                 // 每米对应的像素数（把像素长度换算成物理米）
+  var params = { L: 200, g: 9.8, a0: 45, damp: 0 };
+
+  // 状态：theta 为与竖直方向夹角（弧度），omega 为角速度
+  var theta = 0, omega = 0;
+  var simTime = 0;               // 仿真累计时间
+  var running = true;
+  var dragging = false;
+  var trailOn = true;
+
+  // 周期测量
+  var lastSign = 1, lastCrossTime = 0, measuredPeriod = 0;
+
+  function resetSim() {
+    theta = params.a0 * Math.PI / 180;
+    omega = 0;
+    simTime = 0;
+    measuredPeriod = 0;
+    lastCrossTime = 0;
+    lastSign = theta >= 0 ? 1 : -1;
+    trail.length = 0;
+  }
+
+  // ---------- 物理积分（半隐式欧拉 + 固定步长子步） ----------
+  var SUB_DT = 1 / 480;          // 子步长，保证数值稳定
+  var accumulator = 0;
+
+  function step(dt) {
+    var Lm = params.L / PPM;                     // 摆长（米）
+    var alpha = -(params.g / Lm) * Math.sin(theta) - params.damp * omega;
+    omega += alpha * dt;
+    theta += omega * dt;
+    simTime += dt;
+
+    // 过零检测，测量实际周期
+    var s = theta >= 0 ? 1 : -1;
+    if (s !== lastSign) {
+      if (lastCrossTime > 0) measuredPeriod = (simTime - lastCrossTime) * 2;
+      lastCrossTime = simTime;
+      lastSign = s;
+    }
+  }
+
+  // ---------- 交互 ----------
+  var pivot = { x: 0, y: 0 };
+  var trail = [];
+
+  function ballPos() {
+    return {
+      x: pivot.x + params.L * Math.sin(theta),
+      y: pivot.y + params.L * Math.cos(theta)
+    };
+  }
+
+  function pointerPos(e) {
+    var t = (e.touches && e.touches[0]) ? e.touches[0] : e;
+    var r = canvas.getBoundingClientRect();
+    return { x: t.clientX - r.left, y: t.clientY - r.top };
+  }
+
+  function startDrag(e) {
+    var p = pointerPos(e);
+    var b = ballPos();
+    if (Math.hypot(p.x - b.x, p.y - b.y) < 40) {
+      dragging = true;
+      omega = 0;
+      e.preventDefault();
+    }
+  }
+  function moveDrag(e) {
+    if (!dragging) return;
+    var p = pointerPos(e);
+    var dx = p.x - pivot.x, dy = p.y - pivot.y;
+    var ang = Math.atan2(dx, dy);
+    ang = Math.max(-Math.PI * 0.92, Math.min(Math.PI * 0.92, ang));
+    theta = ang;
+    omega = 0;
+    e.preventDefault();
+  }
+  function endDrag() { dragging = false; }
+
+  canvas.addEventListener('mousedown', startDrag);
+  window.addEventListener('mousemove', moveDrag);
+  window.addEventListener('mouseup', endDrag);
+  canvas.addEventListener('touchstart', startDrag, { passive: false });
+  window.addEventListener('touchmove', moveDrag, { passive: false });
+  window.addEventListener('touchend', endDrag);
+
+  // ---------- 控件 ----------
+  function bind(id, valId, fmt, apply) {
+    var el = document.getElementById(id), lab = document.getElementById(valId);
+    el.addEventListener('input', function () {
+      apply(parseFloat(el.value));
+      lab.textContent = fmt(parseFloat(el.value));
+    });
+  }
+  bind('sL', 'vL', function (v) { return v + ' px'; }, function (v) { params.L = v; });
+  bind('sG', 'vG', function (v) { return v.toFixed(2); }, function (v) { params.g = v; });
+  bind('sA', 'vA', function (v) { return v + '°'; }, function (v) {
+    params.a0 = v;
+    if (!dragging) { theta = v * Math.PI / 180; omega = 0; }
+  });
+  bind('sD', 'vD', function (v) { return v.toFixed(3); }, function (v) { params.damp = v; });
+
+  var btnPlay = document.getElementById('btnPlay');
+  btnPlay.addEventListener('click', function () {
+    running = !running;
+    btnPlay.textContent = running ? '暂停' : '继续';
+  });
+  document.getElementById('btnReset').addEventListener('click', resetSim);
+  document.getElementById('btnTrail').addEventListener('click', function () {
+    trailOn = !trailOn;
+    if (!trailOn) trail.length = 0;
+  });
+
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space') { running = !running; btnPlay.textContent = running ? '暂停' : '继续'; e.preventDefault(); }
+    if (e.key === 'r' || e.key === 'R') resetSim();
+  });
+
+  // ---------- 背景星点 ----------
+  var stars = [];
+  function buildStars() {
+    stars = [];
+    var n = Math.round((W * H) / 14000);
+    for (var i = 0; i < n; i++) {
+      stars.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.2 + 0.2, a: Math.random() * 0.35 + 0.05 });
+    }
+  }
+  buildStars();
+
+  // ---------- 绘制 ----------
+  function drawBackground() {
+    var grd = ctx.createRadialGradient(W * 0.5, H * 0.42, 40, W * 0.5, H * 0.42, Math.max(W, H) * 0.75);
+    grd.addColorStop(0, '#25253a');
+    grd.addColorStop(1, '#1a1a24');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, W, H);
+
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      ctx.fillStyle = 'rgba(170,190,255,' + s.a + ')';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 网格
+    ctx.strokeStyle = 'rgba(120,140,220,0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var x = 0; x < W; x += 60) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (var y = 0; y < H; y += 60) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+  }
+
+  function drawPendulum() {
+    var b = ballPos();
+    var Lm = params.L / PPM;
+    var speed = Math.abs(omega);
+
+    // 摆线
+    ctx.save();
+    ctx.strokeStyle = 'rgba(160,185,255,0.55)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(110,150,255,0.7)';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(pivot.x, pivot.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.restore();
+
+    // 拖尾
+    if (trailOn) {
+      for (var i = 0; i < trail.length; i++) {
+        var t = trail[i], k = (i + 1) / trail.length;
+        ctx.fillStyle = 'rgba(120,170,255,' + (0.30 * k * k) + ')';
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, 2 + 4 * k, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // 摆球光晕
+    var radius = 18;
+    var glow = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, radius * 4.2);
+    glow.addColorStop(0, 'rgba(140,180,255,0.55)');
+    glow.addColorStop(0.35, 'rgba(90,130,255,0.20)');
+    glow.addColorStop(1, 'rgba(90,130,255,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, radius * 4.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 摆球本体（速度越高越亮）
+    var hot = Math.min(1, speed / 4);
+    var bg = ctx.createRadialGradient(b.x - radius * 0.35, b.y - radius * 0.4, 1, b.x, b.y, radius);
+    bg.addColorStop(0, 'rgba(255,255,255,0.95)');
+    bg.addColorStop(0.35, 'rgba(150,' + Math.round(190 + 40 * hot) + ',255,0.95)');
+    bg.addColorStop(1, 'rgba(60,' + Math.round(90 + 40 * hot) + ',220,0.95)');
+    ctx.save();
+    ctx.shadowColor = 'rgba(120,170,255,' + (0.6 + 0.4 * hot) + ')';
+    ctx.shadowBlur = 18 + 14 * hot;
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 支点
+    ctx.fillStyle = '#9fb4ff';
+    ctx.beginPath();
+    ctx.arc(pivot.x, pivot.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(200,215,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pivot.x - 34, pivot.y);
+    ctx.lineTo(pivot.x + 34, pivot.y);
+    ctx.stroke();
+
+    // 竖直参考线与角度弧
+    ctx.save();
+    ctx.setLineDash([4, 6]);
+    ctx.strokeStyle = 'rgba(150,170,230,0.28)';
+    ctx.beginPath();
+    ctx.moveTo(pivot.x, pivot.y);
+    ctx.lineTo(pivot.x, pivot.y + params.L + 40);
+    ctx.stroke();
+    ctx.restore();
+
+    var ar = Math.min(64, params.L * 0.4);
+    ctx.strokeStyle = 'rgba(255,190,120,0.65)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(pivot.x, pivot.y, ar, Math.PI / 2, Math.PI / 2 - theta, theta > 0);
+    ctx.stroke();
+
+    // 角度标注
+    ctx.fillStyle = 'rgba(255,205,150,0.9)';
+    ctx.font = '12px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText((theta * 180 / Math.PI).toFixed(1) + '°',
+      pivot.x + (theta >= 0 ? 14 : -52), pivot.y + ar + 16);
+
+    // 能量条（势能 / 动能）
+    var h = Lm * (1 - Math.cos(theta));
+    var pe = params.g * h;                     // 单位质量势能
+    var ke = 0.5 * (Lm * omega) * (Lm * omega);
+    var tot = Math.max(pe + ke, 1e-6);
+    var barW = 160, barX = W - barW - 24, barY = 24;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(barX, barY, barW, 10);
+    ctx.fillStyle = 'rgba(255,180,110,0.85)';
+    ctx.fillRect(barX, barY, barW * (pe / tot), 10);
+    ctx.fillStyle = 'rgba(120,190,255,0.85)';
+    ctx.fillRect(barX + barW * (pe / tot), barY, barW * (ke / tot), 10);
+    ctx.fillStyle = 'rgba(200,215,255,0.6)';
+    ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText('势能 / 动能', barX, barY - 6);
+  }
+
+  // ---------- 主循环 ----------
+  var lastTs = 0;
+  var readoutTick = 0;
+  var rTheta = document.getElementById('rTheta'), rOmega = document.getElementById('rOmega');
+  var rPeriod = document.getElementById('rPeriod'), rMeas = document.getElementById('rMeas');
+  var rTime = document.getElementById('rTime');
+
+  function frame(ts) {
+    if (!lastTs) lastTs = ts;
+    var dt = (ts - lastTs) / 1000;
+    lastTs = ts;
+    if (dt > 0.25) dt = 0.25;            // 切后台回来时避免爆炸
+
+    pivot.x = W * 0.5;
+    pivot.y = Math.max(90, H * 0.5 - params.L * 0.62);
+
+    if (running && !dragging) {
+      accumulator += dt;
+      var guard = 0;
+      while (accumulator >= SUB_DT && guard < 2000) {
+        step(SUB_DT);
+        accumulator -= SUB_DT;
+        guard++;
+      }
+      if (trailOn) {
+        var b = ballPos();
+        trail.push({ x: b.x, y: b.y });
+        if (trail.length > 90) trail.shift();
+      }
+    } else {
+      accumulator = 0;
+    }
+
+    drawBackground();
+    drawPendulum();
+
+    // 读数每 ~6 帧刷新一次，减少 DOM 开销
+    if (++readoutTick % 6 === 0) {
+      var Lm = params.L / PPM;
+      rTheta.textContent = (theta * 180 / Math.PI).toFixed(1) + '°';
+      rOmega.textContent = omega.toFixed(2) + ' rad/s';
+      rPeriod.textContent = (2 * Math.PI * Math.sqrt(Lm / params.g)).toFixed(2) + ' s';
+      rMeas.textContent = measuredPeriod > 0.05 ? measuredPeriod.toFixed(2) + ' s' : '-- s';
+      rTime.textContent = simTime.toFixed(1) + ' s';
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  resetSim();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
